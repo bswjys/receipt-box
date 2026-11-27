@@ -2,8 +2,8 @@
  *  - HTML·코드: 네트워크 우선 → 오프라인일 때만 캐시 (새 HTML + 옛 JS 섞임 방지)
  *  - 아이콘·manifest: 캐시 우선
  */
-const CACHE = 'receipt-box-v1';
-const VERSION = '1';
+const CACHE = 'receipt-box-v2';
+const VERSION = '2';
 const ASSETS = [
   './',
   './index.html',
