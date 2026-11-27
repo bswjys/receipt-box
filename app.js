@@ -569,7 +569,7 @@
     return r.days ? `d${r.days}` : `m${r.months}`;
   }
 
-function renderDueChips() {
+  function renderDueChips() {
     const rules = DUE_RULES[form.purpose] || [];
     els.dueBox.hidden = !rules.length;
     if (!rules.length) {
