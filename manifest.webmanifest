@@ -1,0 +1,20 @@
+{
+  "name": "영수증함 · 종이 영수증 보관",
+  "short_name": "영수증함",
+  "description": "종이 영수증을 찍어 담아 두고, 교환·환불 기한과 경비 정산을 놓치지 않게 챙겨 주는 혼자 쓰는 영수증 보관함.",
+  "id": "/receipt-box/",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F2F4F6",
+  "theme_color": "#F2F4F6",
+  "lang": "ko",
+  "dir": "ltr",
+  "categories": ["lifestyle", "productivity", "utilities"],
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
