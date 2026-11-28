@@ -14,7 +14,7 @@
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" href="./icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="./icon-180.png">
-<link rel="stylesheet" href="./styles.css?v=3">
+<link rel="stylesheet" href="./styles.css?v=4">
 </head>
 <body>
 <div class="app" id="app">
@@ -201,7 +201,10 @@
         <button type="button" data-ratio="3:4" aria-pressed="false">3:4</button>
         <button type="button" data-ratio="4:3" aria-pressed="false">4:3</button>
       </div>
-      <button type="button" class="crop-rotate" id="cropRotate"><span aria-hidden="true">↺</span> 90°</button>
+    </div>
+    <div class="crop-tools">
+      <button type="button" class="crop-action" id="cropAuto"><span aria-hidden="true">✨</span> 자동 맞춤</button>
+      <button type="button" class="crop-action" id="cropRotate"><span aria-hidden="true">↺</span> 90°</button>
     </div>
   </div>
 
@@ -251,6 +254,6 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="./app.js?v=3"></script>
+<script src="./app.js?v=4"></script>
 </body>
 </html>

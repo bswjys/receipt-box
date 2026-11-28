@@ -974,10 +974,11 @@ input[type="date"].input { padding-right: 10px; min-height: 52px; }
   transition: background .14s ease, color .14s ease;
 }
 .crop-ratios button[aria-pressed="true"] { background: #fff; color: #191F28; }
-.crop-rotate {
-  flex: none;
+.crop-action {
+  flex: 1 1 0;
+  min-width: 0;
   height: 44px;
-  padding: 0 14px;
+  padding: 0 12px;
   border-radius: 12px;
   background: rgba(255, 255, 255, .1);
   color: #fff;
@@ -986,8 +987,8 @@ input[type="date"].input { padding-right: 10px; min-height: 52px; }
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-.crop-rotate span { font-size: 17px; margin-right: 2px; }
-.crop-ratios button:active, .crop-rotate:active { background: rgba(255, 255, 255, .2); }
+.crop-action span { font-size: 16px; margin-right: 3px; }
+.crop-ratios button:active, .crop-action:active { background: rgba(255, 255, 255, .2); }
 .crop-ratios button[aria-pressed="true"]:active { background: #fff; }
 
 .crop-foot {

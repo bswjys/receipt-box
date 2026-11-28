@@ -150,6 +150,34 @@ def make_product(path, w=1600, h=1200):
     return path
 
 
+PAPER_BOX = (150, 200, 1050, 1400)   # 자동 맞춤 확인용: 어두운 배경 위 밝은 영수증 위치
+
+
+def make_paper_on_dark(path, W=1200, H=1600, box=PAPER_BOX):
+    """어두운 책상 위에 놓인 밝은 영수증 — 자동 맞춤(영역 감지) 확인용."""
+    img = Image.new("RGB", (W, H), "#2A2E35")
+    px = img.load()
+    for y in range(0, H, 2):
+        for x in range(0, W, 2):
+            v = 34 + ((x * 7 + y * 13) % 9)
+            px[x, y] = (v, v + 3, v + 7)
+    d = ImageDraw.Draw(img)
+    d.rectangle(box, fill="#FBFAF6")
+    d.rectangle([box[0], box[1], box[2], box[1] + 96], fill="#1B64DA")
+    d.text((box[0] + 40, box[1] + 28), "이마트 고양점", fill="#FFFFFF", font=font(46))
+    for i in range(9):
+        d.text((box[0] + 46, box[1] + 200 + i * 100), f"품목 {i + 1}", fill="#22262B", font=font(30))
+        d.text((box[2] - 240, box[1] + 200 + i * 100), f"{1200 + i * 730:,}", fill="#22262B", font=font(30))
+    img.save(path, "JPEG", quality=88)
+    return path
+
+
+def make_uniform(path, W=1000, H=1300, color="#6E6E6E"):
+    """전체가 고른 색 — 자동 맞춤이 포기하고 전체로 폴백하는지 확인용."""
+    Image.new("RGB", (W, H), color).save(path, "JPEG", quality=88)
+    return path
+
+
 def data_url_of(path):
     with open(path, "rb") as fh:
         return "data:image/jpeg;base64," + base64.b64encode(fh.read()).decode()
@@ -249,6 +277,8 @@ async def run():
     receipt_a = make_receipt(os.path.join(FIX, "receipt_a.jpg"), "이마트 고양점", "45,300")
     receipt_b = make_receipt(os.path.join(FIX, "receipt_b.jpg"), "이마트 고양점", "45,300", accent="#0F8A5F", tall=False)
     product = make_product(os.path.join(FIX, "product.png"))
+    auto_dark = make_paper_on_dark(os.path.join(FIX, "auto_dark.jpg"))
+    auto_flat = make_uniform(os.path.join(FIX, "auto_flat.jpg"))
     r1_url = data_url_of(receipt_a)
     r2_url = data_url_of(receipt_b)
     SEED = build_seed(r1_url, r2_url)
@@ -287,9 +317,9 @@ async def run():
         check("manifest 테마", manifest.get("theme_color") == "#F2F4F6")
         check("manifest standalone", manifest.get("display") == "standalone")
         sw = await page0.evaluate("fetch('./sw.js').then(r => r.text())")
-        check("sw 캐시 이름 receipt-box-v3", "receipt-box-v3" in sw)
+        check("sw 캐시 이름 receipt-box-v4", "receipt-box-v4" in sw)
         html = await page0.evaluate("fetch('./index.html').then(r => r.text())")
-        check("index ?v=3", "styles.css?v=3" in html and "app.js?v=3" in html)
+        check("index ?v=4", "styles.css?v=4" in html and "app.js?v=4" in html)
         css = await page0.evaluate("fetch('./styles.css').then(r => r.text())")
         check("css overflow-x clip", "overflow-x: clip" in css)
         check("css overscroll-behavior-y contain", "overscroll-behavior-y: contain" in css)
@@ -716,8 +746,6 @@ async def run():
         check("처음엔 사진 전체가 자를 영역", st["rect"]["w"] >= 300 and st["rect"]["h"] >= 300, str(st["rect"]))
         check("모서리 핸들 4개", await page7.locator(".crop-handle").count() == 4)
 
-        await page7.screenshot(path=os.path.join(SHOTS, "04_crop_modal_390.png"))
-        check("04_crop_modal_390.png", os.path.getsize(os.path.join(SHOTS, "04_crop_modal_390.png")) > 20000)
 
         # 1:1로 잘라 담기
         await page7.click('#cropRatios button[data-ratio="1:1"]')
@@ -765,8 +793,11 @@ async def run():
         await page7.wait_for_timeout(260)
         r2 = await page7.evaluate("() => window.__receiptbox.crop.rect")
         check("모서리를 끌면 자를 영역이 줄어듦", r2["w"] < r1["w"] - 20 and r2["h"] < r1["h"] - 20, f"{r1} → {r2}")
+        view = await page7.locator("#cropView").bounding_box()
         check("모서리 드래그 뒤에도 사진 안쪽",
-              r2["x"] >= -1 and r2["y"] >= -1 and r2["x"] + r2["w"] <= r1["w"] + 1, str(r2))
+              r2["x"] >= -1 and r2["y"] >= -1
+              and r2["x"] + r2["w"] <= view["width"] + 1
+              and r2["y"] + r2["h"] <= view["height"] + 1, str(r2))
         await page7.click("#cropApply")
         await page7.wait_for_timeout(750)
         crop2 = await page7.evaluate("() => window.__receiptbox.form.photos[0]")
@@ -799,6 +830,75 @@ async def run():
         stored_crop = await page7.evaluate("() => window.__receiptbox.items[0].photos[0]")
         with Image.open(io.BytesIO(base64.b64decode(stored_crop.split(",", 1)[1]))) as im:
             check("저장된 사진이 원본 그대로", im.size == (760, 1240), str(im.size))
+
+        # ✨ 자동 맞춤 — 어두운 배경 위 밝은 영수증
+        await form_open(page7)
+        await page7.set_input_files("#photoInput", [auto_dark])
+        await page7.wait_for_selector("#cropWrap:not([hidden])")
+        await page7.wait_for_timeout(420)
+        check("✨ 자동 맞춤 버튼 있음", "자동 맞춤" in (await page7.inner_text("#cropAuto")),
+              await page7.inner_text("#cropAuto"))
+        st = await page7.evaluate("() => window.__receiptbox.crop")
+        det = st["detected"]
+        check("자동 맞춤: 어두운 배경에서 밝은 종이를 찾음", det is not None, str(det))
+        r0 = st["rect"]
+        sc = st["scale"]
+        bx0, by0 = r0["x"] * sc, r0["y"] * sc
+        bx1, by1 = (r0["x"] + r0["w"]) * sc, (r0["y"] + r0["h"]) * sc
+        check("자동 맞춤: 종이 위치·크기와 맞음",
+              abs(bx0 - PAPER_BOX[0]) <= 40 and abs(by0 - PAPER_BOX[1]) <= 40
+              and abs(bx1 - PAPER_BOX[2]) <= 40 and abs(by1 - PAPER_BOX[3]) <= 40,
+              f"({bx0:.0f},{by0:.0f})-({bx1:.0f},{by1:.0f}) vs {PAPER_BOX}")
+        check("자동 맞춤: 사진 전체보다 작게 잡음", r0["w"] * sc < 1200 * 0.95, str(r0))
+        await page7.wait_for_timeout(2600)  # 앞선 토스트가 사라진 뒤 찍는다
+        await page7.screenshot(path=os.path.join(SHOTS, "04_crop_modal_390.png"))
+        check("04_crop_modal_390.png", os.path.getsize(os.path.join(SHOTS, "04_crop_modal_390.png")) > 20000)
+
+        hb = await page7.locator("#cropFrame .crop-handle.br").bounding_box()
+        await page7.mouse.move(hb["x"] + hb["width"] / 2, hb["y"] + hb["height"] / 2)
+        await page7.mouse.down()
+        await page7.mouse.move(hb["x"] + hb["width"] / 2 - 100, hb["y"] + hb["height"] / 2 - 100, steps=10)
+        await page7.mouse.up()
+        await page7.wait_for_timeout(240)
+        r_manual = await page7.evaluate("() => window.__receiptbox.crop.rect")
+        check("손으로 줄인 뒤", r_manual["w"] < r0["w"] - 20, str(r_manual))
+        await page7.click("#cropAuto")
+        await page7.wait_for_timeout(320)
+        r_auto = await page7.evaluate("() => window.__receiptbox.crop.rect")
+        check("✨ 자동 맞춤을 다시 누르면 감지 영역으로 돌아옴",
+              abs(r_auto["w"] - r0["w"]) <= 1.5 and abs(r_auto["h"] - r0["h"]) <= 1.5
+              and abs(r_auto["x"] - r0["x"]) <= 1.5, f"{r_manual} → {r_auto}")
+
+        # 회전한 뒤에도 자동 맞춤이 다시 동작
+        await page7.click("#cropRotate")
+        await page7.wait_for_timeout(420)
+        st_rot = await page7.evaluate("() => window.__receiptbox.crop")
+        check("회전 뒤 자동 맞춤이 다시 감지", st_rot["detected"] is not None, str(st_rot["detected"]))
+        if st_rot["detected"]:
+            d2 = st_rot["detected"]
+            check("회전 뒤 감지 영역도 회전 반영", d2["w"] > d2["h"], str(d2))
+        await page7.click("#cropCancel")
+        await page7.wait_for_timeout(300)
+
+        # 전체가 고른 색 — 감지 포기 → 전체 폴백
+        await page7.set_input_files("#photoInput", [auto_flat])
+        await page7.wait_for_selector("#cropWrap:not([hidden])")
+        await page7.wait_for_timeout(400)
+        st_flat = await page7.evaluate("() => window.__receiptbox.crop")
+        check("균일한 사진은 감지하지 않음", st_flat["detected"] is None, str(st_flat["detected"]))
+        view = await page7.locator("#cropView").bounding_box()
+        rf = st_flat["rect"]
+        check("감지 실패하면 사진 전체로 폴백",
+              abs(rf["w"] - view["width"]) <= 1.5 and abs(rf["h"] - view["height"]) <= 1.5, str(rf))
+        await page7.click("#cropAuto")
+        await page7.wait_for_timeout(300)
+        check("못 찾으면 안내 문구", "찾지 못해" in (await page7.inner_text("#toast")),
+              await page7.inner_text("#toast"))
+        check("폴백 상태에서도 모서리 조절 가능", await page7.locator(".crop-handle").count() == 4)
+        await page7.click("#cropCancel")
+        await page7.wait_for_timeout(250)
+        await page7.click("#addClose")
+        await page7.wait_for_timeout(250)
         ctx7.close()
 
         # ─────────────────────────────────────────────

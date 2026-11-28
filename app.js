@@ -305,7 +305,7 @@
       'detailWrap', 'detailClose', 'detailBody', 'detailTitle', 'detailDone', 'detailEdit', 'detailDelete',
       'zoomWrap', 'zoomImg', 'zoomClose',
       'cropWrap', 'cropStage', 'cropView', 'cropCanvas', 'cropFrame', 'cropCancel', 'cropApply',
-      'cropKeep', 'cropRotate', 'cropRatios', 'cropSize',
+      'cropKeep', 'cropRotate', 'cropAuto', 'cropRatios', 'cropSize',
       'moreWrap', 'moreBtn', 'moreClose', 'moreInfo', 'backupBtn', 'restoreBtn', 'restoreInput',
       'confirmWrap', 'confirmTitle', 'confirmDesc', 'confirmOk', 'confirmCancel',
       'toast',
@@ -571,7 +571,8 @@
   const CROP_RATIOS = { free: null, '1:1': 1, '3:4': 3 / 4, '4:3': 4 / 3 };
   const CROP_MAX = 2600; // 작업 캔버스 최대 변(px)
   const CROP_MIN = 48;   // 자를 영역 최소 변(화면 px)
-  const crop = { file: null, ratio: 'free', rect: null, scale: 1, drag: null };
+  const CROP_ANALYZE = 160; // 자동 맞춤 분석용 축소 캔버스 긴 변(px)
+  const crop = { file: null, ratio: 'free', rect: null, scale: 1, drag: null, detected: null };
   let cropQueue = [];
 
   function loadImageFile(file) {
@@ -595,6 +596,204 @@
     let h = w / ratio;
     if (h > vh) { h = vh; w = h * ratio; }
     return { x: (vw - w) / 2, y: (vh - h) / 2, w, h };
+  }
+
+  // ── ✨ 자동 맞춤 ──
+  // 축소 캔버스에서 주변 배경과 구분되는 밝은 종이·카드(또는 대비 높은 피사체) 영역을 찾는다.
+  // 못 찾거나 감지 영역이 너무 작으면 null을 돌려주고, 부르는 쪽에서 전체 영역으로 되돌린다.
+  function detectCropRect() {
+    const src = els.cropCanvas;
+    if (!src.width || !src.height) return null;
+    const k = Math.min(1, CROP_ANALYZE / Math.max(src.width, src.height));
+    const w = Math.max(16, Math.round(src.width * k));
+    const h = Math.max(16, Math.round(src.height * k));
+    const cv = document.createElement('canvas');
+    cv.width = w;
+    cv.height = h;
+    const ctx = cv.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(src, 0, 0, w, h);
+    let px = null;
+    try {
+      px = ctx.getImageData(0, 0, w, h).data;
+    } catch (err) {
+      return null;
+    }
+
+    const lumOf = (i) => 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+
+    // 테두리 띠에서 배경색·배경 편차를 잰다
+    const band = Math.max(1, Math.round(Math.min(w, h) * 0.06));
+    const Rs = [];
+    const Gs = [];
+    const Bs = [];
+    const Ls = [];
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (x >= band && x < w - band && y >= band && y < h - band) continue;
+        const i = (y * w + x) * 4;
+        Rs.push(px[i]);
+        Gs.push(px[i + 1]);
+        Bs.push(px[i + 2]);
+        Ls.push(lumOf(i));
+      }
+    }
+    if (!Rs.length) return null;
+    const med = (arr) => { arr.sort((a, b) => a - b); return arr[arr.length >> 1]; };
+    const bgR = med(Rs);
+    const bgG = med(Gs);
+    const bgB = med(Bs);
+    const bgL = med(Ls);
+    let dev = 0;
+    for (let i = 0; i < Ls.length; i++) dev += Math.abs(Ls[i] - bgL);
+    dev /= Ls.length;
+
+    const brightTh = Math.max(26, dev * 2.6); // 배경보다 밝은 종이
+    const colorTh = Math.max(62, dev * 4);    // 배경과 확 다른 색(대비 높은 피사체)
+
+    const rowCount = new Float32Array(h);
+    const colCount = new Float32Array(w);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        const dl = lumOf(i) - bgL;
+        const dc = Math.max(
+          Math.abs(px[i] - bgR),
+          Math.abs(px[i + 1] - bgG),
+          Math.abs(px[i + 2] - bgB)
+        );
+        if (dl > brightTh || dc > colorTh) {
+          rowCount[y] += 1;
+          colCount[x] += 1;
+        }
+      }
+    }
+
+    // 성긴 무늬(글자·바코드)가 끊기지 않게 살짝 뭉갠다
+    const smooth = (arr, size) => {
+      const out = new Float32Array(arr.length);
+      const half = Math.max(0, Math.floor((size - 1) / 2));
+      for (let i = 0; i < arr.length; i++) {
+        let sum = 0;
+        let n = 0;
+        for (let j = i - half; j <= i + half; j++) {
+          if (j < 0 || j >= arr.length) continue;
+          sum += arr[j];
+          n += 1;
+        }
+        out[i] = n ? sum / n : 0;
+      }
+      return out;
+    };
+    const win = Math.max(3, (Math.round(Math.min(w, h) * 0.05) | 1));
+    const bestRun = (counts, th, center) => {
+      const runs = [];
+      let cur = null;
+      for (let i = 0; i < counts.length; i++) {
+        if (counts[i] >= th) {
+          if (cur) cur.b = i;
+          else { cur = { a: i, b: i }; }
+        } else if (cur) {
+          runs.push(cur);
+          cur = null;
+        }
+      }
+      if (cur) runs.push(cur);
+      if (!runs.length) return null;
+      const mine = runs.filter((r) => r.a <= center && center <= r.b);
+      const pool = mine.length ? mine : runs;
+      return pool.reduce((best, r) => (r.b - r.a > best.b - best.a ? r : best), pool[0]);
+    };
+
+    // 뭉갠 값으로 구간을 찾고, 실제 픽셀 수로 가장자리를 다시 조인다
+    const trim = (counts, run, minCount) => {
+      let a = run.a;
+      let b = run.b;
+      while (a < b && counts[a] < minCount) a += 1;
+      while (b > a && counts[b] < minCount) b -= 1;
+      return { a, b };
+    };
+    const rowsFound = bestRun(smooth(rowCount, win), w * 0.2, h / 2);
+    const colsFound = bestRun(smooth(colCount, win), h * 0.2, w / 2);
+    if (!rowsFound || !colsFound) return null;
+    const rowsRun = trim(rowCount, rowsFound, w * 0.12);
+    const colsRun = trim(colCount, colsFound, h * 0.12);
+
+    const padX = Math.max(1, Math.round(w * 0.01));
+    const padY = Math.max(1, Math.round(h * 0.01));
+    const x0 = Math.max(0, colsRun.a - padX);
+    const x1 = Math.min(w - 1, colsRun.b + padX);
+    const y0 = Math.max(0, rowsRun.a - padY);
+    const y1 = Math.min(h - 1, rowsRun.b + padY);
+    const nw = (x1 - x0 + 1) / w;
+    const nh = (y1 - y0 + 1) / h;
+    if (nw < 0.25 || nh < 0.25) return null; // 너무 작으면 안전하게 포기
+    return { x: x0 / w, y: y0 / h, w: nw, h: nh };
+  }
+
+  // 감지한 영역(없으면 전체) 안에 지금 고른 비율을 맞춰 넣는다
+  function cropFitToDetected() {
+    const { w: vw, h: vh } = cropViewSize();
+    const ratio = CROP_RATIOS[crop.ratio] || null;
+    const d = crop.detected;
+    let rect;
+    if (!d) {
+      rect = maxCropRect(ratio, vw, vh);
+    } else {
+      const bx = d.x * vw;
+      const by = d.y * vh;
+      const bw = d.w * vw;
+      const bh = d.h * vh;
+      if (!ratio) {
+        rect = { x: bx, y: by, w: bw, h: bh };
+      } else {
+        let rw = bw;
+        let rh = rw / ratio;
+        if (rh > bh) { rh = bh; rw = rh * ratio; }
+        rect = { x: bx + (bw - rw) / 2, y: by + (bh - rh) / 2, w: rw, h: rh };
+      }
+    }
+    const cw = Math.min(rect.w, vw);
+    const ch = Math.min(rect.h, vh);
+    crop.rect = {
+      x: Math.min(Math.max(0, rect.x), Math.max(0, vw - cw)),
+      y: Math.min(Math.max(0, rect.y), Math.max(0, vh - ch)),
+      w: cw,
+      h: ch,
+    };
+    paintCropFrame();
+  }
+
+  // ✨ 자동 맞춤 — 지금 사진(회전 반영)에서 영역을 다시 찾아 맞춘다
+  function autoFitCrop() {
+    crop.detected = detectCropRect();
+    cropFitToDetected();
+    return !!crop.detected;
+  }
+
+  // 비율만 바꿀 때: 지금 영역의 넓이·중심을 지키며 비율을 맞춘다(반복해도 줄지 않게)
+  function cropFitRatio(ratio) {
+    const { w: vw, h: vh } = cropViewSize();
+    const r0 = crop.rect || maxCropRect(null, vw, vh);
+    if (!ratio) {
+      crop.rect = { x: r0.x, y: r0.y, w: r0.w, h: r0.h };
+      paintCropFrame();
+      return;
+    }
+    const cx = r0.x + r0.w / 2;
+    const cy = r0.y + r0.h / 2;
+    const area = Math.max(1, r0.w * r0.h);
+    let w = Math.sqrt(area * ratio);
+    let h = w / ratio;
+    const maxW = Math.min(vw, vh * ratio);
+    if (w > maxW) { w = maxW; h = w / ratio; }
+    w = Math.max(w, Math.min(CROP_MIN, vw));
+    h = Math.max(h, Math.min(CROP_MIN, vh));
+    if (h > vh) { h = vh; w = h * ratio; }
+    if (w > vw) { w = vw; h = w / ratio; }
+    const x = Math.min(Math.max(0, cx - w / 2), Math.max(0, vw - w));
+    const y = Math.min(Math.max(0, cy - h / 2), Math.max(0, vh - h));
+    crop.rect = { x, y, w, h };
+    paintCropFrame();
   }
 
   function paintCropFrame() {
@@ -662,6 +861,7 @@
     els.cropWrap.hidden = false;
     lockBody();
     layoutCrop();
+    autoFitCrop(); // 처음 열 때 밝은 종이/카드 영역을 찾아 미리 맞춰 둔다
     return true;
   }
 
@@ -671,6 +871,7 @@
     crop.rect = null;
     crop.drag = null;
     crop.ratio = 'free';
+    crop.detected = null;
     paintCropRatio();
     lockBody();
   }
@@ -721,6 +922,7 @@
     cvCtx.imageSmoothingQuality = 'high';
     cvCtx.drawImage(next, 0, 0);
     layoutCrop();
+    autoFitCrop(); // 회전한 사진 기준으로 다시 찾는다
   }
 
   function applyCrop() {
@@ -1358,22 +1560,25 @@
     els.cropApply.addEventListener('click', applyCrop);
     els.cropKeep.addEventListener('click', keepCropOriginal);
     els.cropRotate.addEventListener('click', rotateCrop);
+    els.cropAuto.addEventListener('click', () => {
+      if (!autoFitCrop()) toast('자를 영역을 찾지 못해 전체로 맞췄어요');
+    });
     els.cropRatios.addEventListener('click', (e) => {
       const btn = e.target.closest('button[data-ratio]');
       if (!btn) return;
       const key = Object.prototype.hasOwnProperty.call(CROP_RATIOS, btn.dataset.ratio) ? btn.dataset.ratio : 'free';
       crop.ratio = key;
       paintCropRatio();
-      const { w, h } = cropViewSize();
-      crop.rect = maxCropRect(CROP_RATIOS[key], w, h);
-      paintCropFrame();
+      cropFitRatio(CROP_RATIOS[key]);
     });
     els.cropView.addEventListener('pointerdown', cropDragStart);
     document.addEventListener('pointermove', cropDragMove);
     document.addEventListener('pointerup', cropDragEnd);
     document.addEventListener('pointercancel', cropDragEnd);
     window.addEventListener('resize', () => {
-      if (els.cropWrap && !els.cropWrap.hidden) layoutCrop();
+      if (!els.cropWrap || els.cropWrap.hidden) return;
+      layoutCrop();
+      cropFitToDetected();
     });
 
     // 더보기·백업
@@ -1450,9 +1655,11 @@
         rect: crop.rect ? { ...crop.rect } : null,
         scale: crop.scale,
         source: els.cropCanvas ? { w: els.cropCanvas.width, h: els.cropCanvas.height } : null,
+        detected: crop.detected ? { ...crop.detected } : null,
         queued: cropQueue.length,
       };
     },
+    autoFitCrop,
     badgeOf,
     dayDiff,
     addDays,
