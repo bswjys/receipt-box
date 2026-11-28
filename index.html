@@ -14,7 +14,7 @@
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="icon" href="./icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="./icon-180.png">
-<link rel="stylesheet" href="./styles.css?v=2">
+<link rel="stylesheet" href="./styles.css?v=3">
 </head>
 <body>
 <div class="app" id="app">
@@ -171,6 +171,46 @@
   <p class="zoom-note">교환·환불받을 때는 이 화면을 보여 주세요</p>
 </div>
 
+<!-- ── 사진 자르기 ───────────────────────────── -->
+<div class="crop" id="cropWrap" role="dialog" aria-modal="true" aria-label="사진 자르기" hidden>
+  <div class="crop-head">
+    <button type="button" class="crop-text" id="cropCancel">취소</button>
+    <h2 class="crop-title">사진 자르기</h2>
+    <button type="button" class="crop-text strong" id="cropApply">자르기 적용</button>
+  </div>
+
+  <div class="crop-stage" id="cropStage">
+    <div class="crop-view" id="cropView">
+      <canvas class="crop-canvas" id="cropCanvas" width="1" height="1" aria-label="자를 사진"></canvas>
+      <div class="crop-frame" id="cropFrame">
+        <span class="crop-grid" aria-hidden="true"></span>
+        <button type="button" class="crop-handle tl" data-handle="tl" aria-label="왼쪽 위 모서리 조절"></button>
+        <button type="button" class="crop-handle tr" data-handle="tr" aria-label="오른쪽 위 모서리 조절"></button>
+        <button type="button" class="crop-handle bl" data-handle="bl" aria-label="왼쪽 아래 모서리 조절"></button>
+        <button type="button" class="crop-handle br" data-handle="br" aria-label="오른쪽 아래 모서리 조절"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="crop-panel">
+    <p class="crop-hint">모서리를 끌어 자를 영역을 맞춰 보세요</p>
+    <div class="crop-tools">
+      <div class="crop-ratios" id="cropRatios" role="group" aria-label="자르기 비율">
+        <button type="button" data-ratio="free" aria-pressed="true">자유</button>
+        <button type="button" data-ratio="1:1" aria-pressed="false">1:1</button>
+        <button type="button" data-ratio="3:4" aria-pressed="false">3:4</button>
+        <button type="button" data-ratio="4:3" aria-pressed="false">4:3</button>
+      </div>
+      <button type="button" class="crop-rotate" id="cropRotate"><span aria-hidden="true">↺</span> 90°</button>
+    </div>
+  </div>
+
+  <div class="crop-foot">
+    <button type="button" class="crop-keep" id="cropKeep">원본 그대로</button>
+    <span class="crop-size" id="cropSize">자를 영역 0 × 0</span>
+  </div>
+</div>
+
 <!-- ── 더보기 시트 ───────────────────────────── -->
 <div class="overlay" id="moreWrap" hidden>
   <div class="sheet sheet-small" role="dialog" aria-modal="true" aria-labelledby="moreTitle">
@@ -211,6 +251,6 @@
 
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="./app.js?v=2"></script>
+<script src="./app.js?v=3"></script>
 </body>
 </html>

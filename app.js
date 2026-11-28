@@ -304,6 +304,8 @@
       'fStore', 'fAmount', 'fDate', 'dateHint', 'purposeSeg', 'dueBox', 'dueLabel', 'dueChips', 'fDue', 'dueHint', 'fMemo',
       'detailWrap', 'detailClose', 'detailBody', 'detailTitle', 'detailDone', 'detailEdit', 'detailDelete',
       'zoomWrap', 'zoomImg', 'zoomClose',
+      'cropWrap', 'cropStage', 'cropView', 'cropCanvas', 'cropFrame', 'cropCancel', 'cropApply',
+      'cropKeep', 'cropRotate', 'cropRatios', 'cropSize',
       'moreWrap', 'moreBtn', 'moreClose', 'moreInfo', 'backupBtn', 'restoreBtn', 'restoreInput',
       'confirmWrap', 'confirmTitle', 'confirmDesc', 'confirmOk', 'confirmCancel',
       'toast',
@@ -433,7 +435,7 @@
      열 때 스크롤 위치를 저장하고 body를 fixed로 잠가 배경이 흔들리지 않게 한다.
      여러 창이 겹쳐 열려도 마지막 창이 닫힐 때만 원래 위치로 돌아간다. */
   let lockedScrollY = null;
-  const MODAL_KEYS = ['addWrap', 'detailWrap', 'moreWrap', 'confirmWrap', 'zoomWrap'];
+  const MODAL_KEYS = ['addWrap', 'detailWrap', 'moreWrap', 'confirmWrap', 'zoomWrap', 'cropWrap'];
 
   function lockBody() {
     const anyOpen = MODAL_KEYS.some((k) => els[k] && !els[k].hidden);
@@ -522,31 +524,30 @@
     els.photoGrid.innerHTML = cells + add;
   }
 
+  // 사진을 고르면 바로 담지 않고 자르기 창을 먼저 띄운다
   async function handlePhotoFiles(files) {
     if (!form) return;
-    const list = Array.from(files || []);
-    if (!list.length) return;
+    const all = Array.from(files || []);
+    els.photoInput.value = '';
+    if (!all.length) return;
     const room = MAX_PHOTOS - form.photos.length;
     if (room <= 0) {
       toast(`사진은 ${MAX_PHOTOS}장까지 넣을 수 있어요`);
-      els.photoInput.value = '';
       return;
     }
-    const use = list.slice(0, room);
-    if (list.length > room) toast(`사진은 ${MAX_PHOTOS}장까지라 ${room}장만 넣었어요`);
-    let failed = 0;
-    for (const file of use) {
-      if (!String(file.type || '').startsWith('image/')) { failed += 1; continue; }
-      try {
-        const data = await compressImage(file);
-        if (form.photos.length < MAX_PHOTOS) form.photos.push(data);
-      } catch (err) {
-        failed += 1;
-      }
+    const usable = all.filter((file) => String(file.type || '').startsWith('image/'));
+    if (!usable.length) {
+      toast('사진을 읽지 못했어요. 다른 사진으로 해 주세요.');
+      return;
     }
-    if (failed) toast('사진을 읽지 못했어요. 다른 사진으로 해 주세요.');
-    renderPhotoGrid();
-    els.photoInput.value = '';
+    if (usable.length > room) toast(`사진은 ${MAX_PHOTOS}장까지라 ${room}장만 넣었어요`);
+    const batch = usable.slice(0, room);
+    if (!els.cropWrap.hidden) {
+      cropQueue = cropQueue.concat(batch);
+      return;
+    }
+    cropQueue = batch;
+    openNextCrop();
   }
 
   function openZoom(src) {
@@ -560,6 +561,275 @@
     els.zoomWrap.hidden = true;
     els.zoomImg.removeAttribute('src');
     lockBody();
+  }
+
+  /* ── 사진 자르기(크롭) ───────────────────────── */
+  /* 고른·찍은 사진을 바로 담지 않고, 자를 영역을 고른 뒤 담는다.
+     · 자르기 적용 — 네 모서리 핸들·박스 안쪽 드래그로 고른 영역만 잘라 JPEG로 압축
+     · 원본 그대로 — 자르지 않고 예전처럼 전체를 압축해 담는다
+     · 비율 칩(자유·1:1·3:4·4:3)과 ↺ 90° 회전 지원, Pointer 이벤트로 아이폰 터치 대응 */
+  const CROP_RATIOS = { free: null, '1:1': 1, '3:4': 3 / 4, '4:3': 4 / 3 };
+  const CROP_MAX = 2600; // 작업 캔버스 최대 변(px)
+  const CROP_MIN = 48;   // 자를 영역 최소 변(화면 px)
+  const crop = { file: null, ratio: 'free', rect: null, scale: 1, drag: null };
+  let cropQueue = [];
+
+  function loadImageFile(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('이미지를 읽지 못했어요')); };
+      img.src = url;
+    });
+  }
+
+  function cropViewSize() {
+    const box = els.cropView.getBoundingClientRect();
+    return { w: box.width || 1, h: box.height || 1 };
+  }
+
+  function maxCropRect(ratio, vw, vh) {
+    if (!ratio) return { x: 0, y: 0, w: vw, h: vh };
+    let w = vw;
+    let h = w / ratio;
+    if (h > vh) { h = vh; w = h * ratio; }
+    return { x: (vw - w) / 2, y: (vh - h) / 2, w, h };
+  }
+
+  function paintCropFrame() {
+    if (!crop.rect) return;
+    const r = crop.rect;
+    els.cropFrame.style.left = `${r.x}px`;
+    els.cropFrame.style.top = `${r.y}px`;
+    els.cropFrame.style.width = `${r.w}px`;
+    els.cropFrame.style.height = `${r.h}px`;
+    els.cropSize.textContent = `자를 영역 ${Math.round(r.w * crop.scale)} × ${Math.round(r.h * crop.scale)}`;
+  }
+
+  function paintCropRatio() {
+    els.cropRatios.querySelectorAll('button[data-ratio]').forEach((btn) => {
+      btn.setAttribute('aria-pressed', String(btn.dataset.ratio === crop.ratio));
+    });
+  }
+
+  // 작업 캔버스를 화면에 맞춰 줄이고, 자를 영역 상자를 다시 그린다
+  function layoutCrop() {
+    const cv = els.cropCanvas;
+    const w = cv.width || 1;
+    const h = cv.height || 1;
+    const availW = Math.max(80, els.cropStage.clientWidth - 48);
+    const availH = Math.max(80, els.cropStage.clientHeight - 48);
+    const fit = Math.min(availW / w, availH / h, 1);
+    const vw = Math.max(40, w * fit);
+    const vh = Math.max(40, h * fit);
+    els.cropView.style.width = `${Math.round(vw * 100) / 100}px`;
+    els.cropView.style.height = `${Math.round(vh * 100) / 100}px`;
+    cv.style.width = `${vw}px`;
+    cv.style.height = `${vh}px`;
+    crop.scale = w / vw;
+    crop.rect = maxCropRect(CROP_RATIOS[crop.ratio] || null, vw, vh);
+    paintCropFrame();
+  }
+
+  async function openCrop(file) {
+    if (!form || form.photos.length >= MAX_PHOTOS) return false;
+    let img = null;
+    try {
+      img = await loadImageFile(file);
+    } catch (err) {
+      return false;
+    }
+    const nw = img.naturalWidth || img.width || 0;
+    const nh = img.naturalHeight || img.height || 0;
+    if (!nw || !nh) return false;
+    if (!form || form.photos.length >= MAX_PHOTOS) return false;
+    const k = Math.min(1, CROP_MAX / Math.max(nw, nh));
+    const cv = els.cropCanvas;
+    cv.width = Math.max(1, Math.round(nw * k));
+    cv.height = Math.max(1, Math.round(nh * k));
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, 0, 0, cv.width, cv.height);
+    crop.file = file;
+    crop.ratio = 'free';
+    crop.rect = null;
+    crop.drag = null;
+    paintCropRatio();
+    els.cropWrap.hidden = false;
+    lockBody();
+    layoutCrop();
+    return true;
+  }
+
+  function closeCrop() {
+    els.cropWrap.hidden = true;
+    crop.file = null;
+    crop.rect = null;
+    crop.drag = null;
+    crop.ratio = 'free';
+    paintCropRatio();
+    lockBody();
+  }
+
+  function cancelCrop() {
+    cropQueue = [];
+    closeCrop();
+  }
+
+  // 여러 장을 고르면 한 장씩 차례로 자르기 창을 띄운다
+  async function openNextCrop() {
+    while (cropQueue.length) {
+      const file = cropQueue.shift();
+      if (await openCrop(file)) return;
+      toast('사진을 읽지 못했어요. 다른 사진으로 해 주세요.');
+    }
+  }
+
+  function addCropPhoto(data) {
+    if (!form) return false;
+    if (form.photos.length >= MAX_PHOTOS) {
+      toast(`사진은 ${MAX_PHOTOS}장까지 넣을 수 있어요`);
+      return false;
+    }
+    form.photos.push(data);
+    renderPhotoGrid();
+    return true;
+  }
+
+  function rotateCrop() {
+    const cv = els.cropCanvas;
+    if (!cv.width || !cv.height) return;
+    const tmp = document.createElement('canvas');
+    tmp.width = cv.width;
+    tmp.height = cv.height;
+    tmp.getContext('2d').drawImage(cv, 0, 0);
+    const next = document.createElement('canvas');
+    next.width = tmp.height;
+    next.height = tmp.width;
+    const ctx = next.getContext('2d');
+    ctx.translate(next.width, 0);
+    ctx.rotate(Math.PI / 2);
+    ctx.drawImage(tmp, 0, 0);
+    cv.width = next.width;
+    cv.height = next.height;
+    const cvCtx = cv.getContext('2d');
+    cvCtx.imageSmoothingEnabled = true;
+    cvCtx.imageSmoothingQuality = 'high';
+    cvCtx.drawImage(next, 0, 0);
+    layoutCrop();
+  }
+
+  function applyCrop() {
+    const cv = els.cropCanvas;
+    if (!crop.rect || !cv.width || !cv.height) return;
+    const r = crop.rect;
+    const sx = Math.max(0, Math.round(r.x * crop.scale));
+    const sy = Math.max(0, Math.round(r.y * crop.scale));
+    const sw = Math.max(1, Math.min(cv.width - sx, Math.round(r.w * crop.scale)));
+    const sh = Math.max(1, Math.min(cv.height - sy, Math.round(r.h * crop.scale)));
+    const k = Math.min(1, MAX_SIDE / Math.max(sw, sh));
+    const out = document.createElement('canvas');
+    out.width = Math.max(1, Math.round(sw * k));
+    out.height = Math.max(1, Math.round(sh * k));
+    const ctx = out.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(cv, sx, sy, sw, sh, 0, 0, out.width, out.height);
+    const data = out.toDataURL('image/jpeg', QUALITY);
+    addCropPhoto(data);
+    closeCrop();
+    openNextCrop();
+  }
+
+  async function keepCropOriginal() {
+    const file = crop.file;
+    if (!file) return;
+    let data = null;
+    try {
+      data = await compressImage(file);
+    } catch (err) {
+      toast('사진을 읽지 못했어요. 다른 사진으로 해 주세요.');
+      closeCrop();
+      openNextCrop();
+      return;
+    }
+    addCropPhoto(data);
+    closeCrop();
+    openNextCrop();
+  }
+
+  // 비율을 지키면서 모서리를 끄는 크기 조절
+  function cropResizeRect(r0, mode, dx, dy, ratio, vw, vh) {
+    const left = mode.indexOf('l') >= 0;
+    const top = mode.indexOf('t') >= 0;
+    const ax = left ? r0.x + r0.w : r0.x;   // 고정점(반대 모서리)
+    const ay = top ? r0.y + r0.h : r0.y;
+    const px = (left ? r0.x : r0.x + r0.w) + dx;
+    const py = (top ? r0.y : r0.y + r0.h) + dy;
+    const maxW = Math.max(CROP_MIN, left ? ax : vw - ax);
+    const maxH = Math.max(CROP_MIN, top ? ay : vh - ay);
+    let w = Math.abs(px - ax);
+    let h = Math.abs(py - ay);
+    if (ratio) {
+      w = Math.max(w, h * ratio);
+      h = w / ratio;
+      if (w > maxW) { w = maxW; h = w / ratio; }
+      if (h > maxH) { h = maxH; w = h * ratio; }
+      w = Math.max(w, Math.max(Math.min(CROP_MIN, maxW), Math.min(CROP_MIN, maxH) * ratio));
+      h = Math.min(w / ratio, maxH);
+      w = h * ratio;
+    } else {
+      w = Math.min(Math.max(w, Math.min(CROP_MIN, maxW)), maxW);
+      h = Math.min(Math.max(h, Math.min(CROP_MIN, maxH)), maxH);
+    }
+    return { x: left ? ax - w : ax, y: top ? ay - h : ay, w, h };
+  }
+
+  function cropDragStart(e) {
+    if (!crop.rect) return;
+    const handle = e.target.closest('[data-handle]');
+    const frame = e.target.closest('#cropFrame');
+    if (!handle && !frame) return;
+    if (typeof e.button === 'number' && e.button > 0) return;
+    e.preventDefault();
+    crop.drag = {
+      mode: handle ? handle.dataset.handle : 'move',
+      sx: e.clientX,
+      sy: e.clientY,
+      rect0: { ...crop.rect },
+      ratio: handle ? (CROP_RATIOS[crop.ratio] || null) : null,
+    };
+    const target = handle || frame;
+    if (target.setPointerCapture) {
+      try { target.setPointerCapture(e.pointerId); } catch (err) { /* 무시 */ }
+    }
+  }
+
+  function cropDragMove(e) {
+    const d = crop.drag;
+    if (!d) return;
+    e.preventDefault();
+    const { w: vw, h: vh } = cropViewSize();
+    const dx = e.clientX - d.sx;
+    const dy = e.clientY - d.sy;
+    if (d.mode === 'move') {
+      const x = Math.min(Math.max(0, d.rect0.x + dx), Math.max(0, vw - d.rect0.w));
+      const y = Math.min(Math.max(0, d.rect0.y + dy), Math.max(0, vh - d.rect0.h));
+      crop.rect = { x, y, w: d.rect0.w, h: d.rect0.h };
+    } else {
+      crop.rect = cropResizeRect(d.rect0, d.mode, dx, dy, d.ratio, vw, vh);
+    }
+    paintCropFrame();
+  }
+
+  function cropDragEnd() {
+    crop.drag = null;
   }
 
   /* ── 등록·수정 ───────────────────────── */
@@ -1083,6 +1353,29 @@
       else if (!e.target.closest('.zoom-note')) closeZoom();
     });
 
+    // 사진 자르기
+    els.cropCancel.addEventListener('click', cancelCrop);
+    els.cropApply.addEventListener('click', applyCrop);
+    els.cropKeep.addEventListener('click', keepCropOriginal);
+    els.cropRotate.addEventListener('click', rotateCrop);
+    els.cropRatios.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-ratio]');
+      if (!btn) return;
+      const key = Object.prototype.hasOwnProperty.call(CROP_RATIOS, btn.dataset.ratio) ? btn.dataset.ratio : 'free';
+      crop.ratio = key;
+      paintCropRatio();
+      const { w, h } = cropViewSize();
+      crop.rect = maxCropRect(CROP_RATIOS[key], w, h);
+      paintCropFrame();
+    });
+    els.cropView.addEventListener('pointerdown', cropDragStart);
+    document.addEventListener('pointermove', cropDragMove);
+    document.addEventListener('pointerup', cropDragEnd);
+    document.addEventListener('pointercancel', cropDragEnd);
+    window.addEventListener('resize', () => {
+      if (els.cropWrap && !els.cropWrap.hidden) layoutCrop();
+    });
+
     // 더보기·백업
     els.moreBtn.addEventListener('click', openMore);
     els.moreClose.addEventListener('click', () => { els.moreWrap.hidden = true; lockBody(); });
@@ -1112,6 +1405,7 @@
 
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
+      if (!els.cropWrap.hidden) { cancelCrop(); return; }
       if (!els.zoomWrap.hidden) { closeZoom(); return; }
       if (!els.confirmWrap.hidden) { resolveConfirm(false); return; }
       if (!els.moreWrap.hidden) { els.moreWrap.hidden = true; lockBody(); return; }
@@ -1149,6 +1443,16 @@
     get view() { return { tab: state.tab, purpose: state.purpose, q: state.q, mode: state.mode }; },
     get form() { return form; },
     get currentId() { return currentId; },
+    get crop() {
+      return {
+        open: !!(els.cropWrap && !els.cropWrap.hidden),
+        ratio: crop.ratio,
+        rect: crop.rect ? { ...crop.rect } : null,
+        scale: crop.scale,
+        source: els.cropCanvas ? { w: els.cropCanvas.width, h: els.cropCanvas.height } : null,
+        queued: cropQueue.length,
+      };
+    },
     badgeOf,
     dayDiff,
     addDays,

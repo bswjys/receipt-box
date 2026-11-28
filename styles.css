@@ -804,6 +804,222 @@ input[type="date"].input { padding-right: 10px; min-height: 52px; }
 .more-copy strong { font-size: 14.5px; font-weight: 700; }
 .more-copy small { font-size: 11.5px; color: var(--ink-3); }
 
+/* ── 사진 자르기 ───────────────────────── */
+.crop {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  background: #0C1116;
+  color: #fff;
+  animation: fade .16s ease;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+}
+.crop-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 56px;
+  padding: 4px 10px;
+}
+.crop-title {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.4px;
+  color: #fff;
+  white-space: nowrap;
+}
+.crop-text {
+  flex: none;
+  min-width: 66px;
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, .84);
+}
+.crop-text:active { background: rgba(255, 255, 255, .1); }
+.crop-text.strong {
+  color: #fff;
+  font-weight: 800;
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.crop-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow: hidden;
+  touch-action: none;
+}
+.crop-view {
+  position: relative;
+  touch-action: none;
+}
+.crop-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #0C1116;
+}
+.crop-frame {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border: 1.5px solid rgba(255, 255, 255, .92);
+  box-shadow: 0 0 0 9999px rgba(6, 10, 16, .64);
+  touch-action: none;
+  cursor: move;
+}
+.crop-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(0, 0, 0, .22) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 0, 0, .22) 1px, transparent 1px),
+    linear-gradient(to right, rgba(255, 255, 255, .68) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, .68) 1px, transparent 1px);
+  background-size: 33.3333% 33.3333%;
+  background-position: -1px 0, 0 -1px, -2px 0, 0 -2px;
+}
+.crop-handle {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  background: none;
+  touch-action: none;
+}
+.crop-handle::before,
+.crop-handle::after {
+  content: "";
+  position: absolute;
+  background: #fff;
+  border-radius: 3px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .45);
+}
+.crop-handle::before { width: 22px; height: 4px; }
+.crop-handle::after { width: 4px; height: 22px; }
+.crop-handle.tl { left: -22px; top: -22px; }
+.crop-handle.tl::before { left: 20px; top: 20px; }
+.crop-handle.tl::after { left: 20px; top: 20px; }
+.crop-handle.tr { right: -22px; top: -22px; }
+.crop-handle.tr::before { right: 20px; top: 20px; }
+.crop-handle.tr::after { right: 20px; top: 20px; }
+.crop-handle.bl { left: -22px; bottom: -22px; }
+.crop-handle.bl::before { left: 20px; bottom: 20px; }
+.crop-handle.bl::after { left: 20px; bottom: 20px; }
+.crop-handle.br { right: -22px; bottom: -22px; }
+.crop-handle.br::before { right: 20px; bottom: 20px; }
+.crop-handle.br::after { right: 20px; bottom: 20px; }
+
+.crop-panel {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 16px 0;
+}
+.crop-hint {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, .56);
+  text-align: center;
+  letter-spacing: -0.1px;
+}
+.crop-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.crop-ratios {
+  flex: 1;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.crop-ratios::-webkit-scrollbar { display: none; }
+.crop-ratios button {
+  flex: 1 0 auto;
+  min-width: 54px;
+  height: 44px;
+  padding: 0 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .1);
+  color: rgba(255, 255, 255, .78);
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  transition: background .14s ease, color .14s ease;
+}
+.crop-ratios button[aria-pressed="true"] { background: #fff; color: #191F28; }
+.crop-rotate {
+  flex: none;
+  height: 44px;
+  padding: 0 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .1);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.crop-rotate span { font-size: 17px; margin-right: 2px; }
+.crop-ratios button:active, .crop-rotate:active { background: rgba(255, 255, 255, .2); }
+.crop-ratios button[aria-pressed="true"]:active { background: #fff; }
+
+.crop-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px 14px;
+}
+.crop-keep {
+  flex: none;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, .3);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.crop-keep:active { background: rgba(255, 255, 255, .14); }
+.crop-size {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, .56);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ── 확인 창 ───────────────────────── */
 .modal {
   width: calc(100% - 40px);
